@@ -1,0 +1,84 @@
+from dotenv import load_dotenv
+from controller import setup_logging
+import openpyxl
+import boto3
+import os
+
+logger = setup_logging()
+load_dotenv()
+
+access_key_id = os.getenv("ACCESS_KEY")
+secret_access_key = os.getenv("SECRET_KEY")
+endpoint_url = os.getenv("ENDPOINT_URL")
+bucket_name = os.getenv("BUCKET_NAME")
+
+
+def connect_to_s3():
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+    )
+    try:
+        return s3
+    except Exception as e:
+        logger.error("Failed to connect to S3: {}".format(e))
+
+
+def get_normal_files_in_bucket(bucket_name):
+    s3 = connect_to_s3()
+    try:
+        excel_file_name = "fptu-homecoming-2023.xlsx"
+        response = s3.list_objects(Bucket=bucket_name)
+        excel_files = [
+            obj["Key"]
+            for obj in response.get("Contents", [])
+            if obj["Key"].endswith(".xlsx")
+        ]
+        if len(excel_files) == 1:
+            excel_file = excel_files[0]
+        else:
+            excel_file = None
+        if not excel_file:
+            # If no Excel files found, create a new one
+            create_empty_excel_and_upload(excel_file_name, bucket_name)
+        file_obj = s3.get_object(Bucket=bucket_name, Key=excel_file_name)
+        file_name = os.path.basename(excel_file_name)
+        with open(os.path.join(file_name), "wb") as f:
+            f.write(file_obj["Body"].read())
+        logger.info(f"Data in S3 read successfully.")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to read data from the bucket '{bucket_name}': {e}")
+        return False
+
+
+def create_empty_excel_and_upload(file_name, bucket_name):
+    try:
+        # Create a new Excel workbook and add a default worksheet
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+
+        # Save the workbook to the specified file name
+        workbook.save(file_name)
+
+        # Upload the file to S3
+        upload_file_to_s3(bucket_name, file_name)
+        logger.info(
+            f"{file_name} created and uploaded to S3 bucket '{bucket_name}' successfully."
+        )
+    except Exception as e:
+        logger.error(f"Failed to create and upload {file_name} to S3: {e}")
+
+
+def upload_file_to_s3(bucket_name, object_name):
+    s3 = connect_to_s3()
+    object_key = "fptu-homecoming-2023.xlsx"
+    try:
+        s3.head_object(Bucket=bucket_name, Key=object_key)
+    except Exception as e:
+        logger.info(f"Failed to upload the file to S3: {e}")
+
+    s3.upload_file(object_name, bucket_name, object_key)
+    logger.info(f"File uploaded to '{bucket_name}/{object_key}' successfully.")
